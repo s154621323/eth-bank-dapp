@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>以太坊银行</title>
+  <script src="./node_modules/ethers/dist/ethers.umd.js"></script>
+  <script src="./node_modules/jquery/dist/jquery.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1><i class="fas fa-university"></i> 以太坊银行</h1>
+      <p>基于智能合约的去中心化银行应用，安全可靠地管理您的数字资产</p>
+    </div>
+
+    <div class="section">
+      <h2><i class="fas fa-wallet"></i> 钱包连接</h2>
+      <button id="connectWallet"><i class="fas fa-link"></i> 连接钱包</button>
+      <div id="walletInfo" class="info" style="display: none;">
+        <i class="fas fa-user-check"></i> 已连接钱包: <span id="walletAddress"></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2><i class="fas fa-coins"></i> 账户余额</h2>
+      <button id="getBalance"><i class="fas fa-sync-alt"></i> 刷新余额</button>
+      <div id="balanceInfo" class="info" style="display: none;">
+        <div class="balance-amount">
+          <i class="fab fa-ethereum"></i> <span id="balance">0.00</span> <span class="eth-symbol">ETH</span>
+        </div>
+      </div>
+      <div id="balanceStatus" class="transaction-status"></div>
+    </div>
+
+    <div class="section">
+      <h2><i class="fas fa-arrow-right"></i> 存款</h2>
+      <div class="input-group">
+        <div class="eth-input" style="flex: 1;">
+          <input type="number" id="depositAmount" placeholder="输入存款金额" step="0.01" min="0">
+        </div>
+        <button id="depositButton">
+          <div class="spinner" id="depositSpinner"></div><i class="fas fa-plus-circle"></i> 存款
+        </button>
+      </div>
+      <div id="depositStatus" class="transaction-status"></div>
+    </div>
+
+    <div class="section">
+      <h2><i class="fas fa-arrow-left"></i> 取款</h2>
+      <div class="input-group">
+        <div class="eth-input" style="flex: 1;">
+          <input type="number" id="withdrawAmount" placeholder="输入取款金额" step="0.01" min="0">
+        </div>
+        <button id="withdrawButton">
+          <div class="spinner" id="withdrawSpinner"></div><i class="fas fa-minus-circle"></i> 取款
+        </button>
+      </div>
+      <div id="withdrawStatus" class="transaction-status"></div>
+    </div>
+  </div>
+
+  <script>
+    // 合约地址
+    const contractAddress = "0x13655eBaB38e22E8E357Fb5d9E710F967b14AD80";
+
+    // 合约 ABI
+    const contractABI = [
+      "function deposit() public payable",
+      "function withdraw(uint256 amount) public",
+      "function getBalance() public view returns (uint256)",
+      "function getContractBalance() public view returns (uint256)",
+      "event Deposit(address indexed account, uint256 amount)",
+      "event Withdraw(address indexed account, uint256 amount)"
+    ];
+
+    let provider;
+    let signer;
+    let contract;
+    let userAddress;
+
+    // 初始化
+    async function init () {
+      if (typeof window.ethereum !== 'undefined') {
+        provider = new ethers.BrowserProvider(window.ethereum);
+        contract = new ethers.Contract(contractAddress, contractABI, provider);
+
+        // 检查是否已连接
+        try {
+          const accounts = await provider.listAccounts();
+          if (accounts.length > 0) {
+            userAddress = accounts[0].address;
+            signer = await provider.getSigner();
+            contract = contract.connect(signer);
+            updateWalletUI(userAddress);
+            getBalance();
+          }
+        } catch (error) {
+          console.log("未检测到已连接的钱包");
+        }
+      } else {
+        showAlert('请安装 MetaMask 钱包以使用此应用!', 'error');
+      }
+    }
+
+    // 连接钱包
+    async function connectWallet () {
+      try {
+        $('#connectWallet i').hide();
+        $('#connectWallet').prepend('<div class="spinner"></div>');
+        $('.spinner').show();
+
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        userAddress = accounts[0];
+        signer = await provider.getSigner();
+        contract = contract.connect(signer);
+
+        updateWalletUI(userAddress);
+        getBalance();
+
+        $('.spinner').hide();
+        $('#connectWallet i').show();
+      } catch (error) {
+        console.error('连接钱包失败:', error);
+        showAlert('连接钱包失败! ' + (error.message || ''), 'error');
+        $('.spinner').hide();
+        $('#connectWallet i').show();
+      }
+    }
+
+    function updateWalletUI (address) {
+      const shortAddress = address.substring(0, 6) + '...' + address.substring(address.length - 4);
+      $('#walletAddress').text(shortAddress);
+      $('#walletInfo').fadeIn(300);
+      $('#connectWallet').html('<i class="fas fa-check-circle"></i> 已连接');
+      $('#connectWallet').css('background-color', '#2ecc71');
+      $('#connectWallet').prop('disabled', true);
+
+      // 将完整地址放入title中便于查看
+      $('#walletAddress').attr('title', address);
+    }
+
+    // 查询余额
+    async function getBalance () {
+      try {
+        $('#balanceStatus').removeClass().addClass('transaction-status pending').text('正在查询余额...').fadeIn(300);
+
+        const balance = await contract.getBalance();
+        const formattedBalance = parseFloat(ethers.formatEther(balance)).toFixed(4);
+
+        $('#balance').text(formattedBalance);
+        $('#balanceInfo').fadeIn(300);
+        $('#balanceStatus').removeClass().addClass('transaction-status success').text('余额查询成功!').fadeIn(300);
+
+        setTimeout(() => {
+          $('#balanceStatus').fadeOut(500);
+        }, 3000);
+      } catch (error) {
+        console.error('查询余额失败:', error);
+        $('#balanceStatus').removeClass().addClass('transaction-status error').text('查询余额失败: ' + (error.message || '')).fadeIn(300);
+      }
+    }
+
+    // 存款
+    async function deposit () {
+      try {
+        const amount = $('#depositAmount').val();
+        if (!amount || parseFloat(amount) <= 0) {
+          showAlert('请输入有效的存款金额!', 'error');
+          return;
+        }
+
+        // 显示加载状态
+        $('#depositButton').prop('disabled', true);
+        $('#depositSpinner').show();
+        $('#depositStatus').removeClass().addClass('transaction-status pending').text('交易处理中...').fadeIn(300);
+
+        const tx = await contract.deposit({
+          value: ethers.parseEther(amount.toString())
+        });
+
+        $('#depositStatus').removeClass().addClass('transaction-status pending').html(`
+          <div>交易已提交! 等待确认...</div>
+          <div style="font-size: 0.8rem; margin-top: 5px;">交易哈希: ${tx.hash}</div>
+        `).fadeIn(300);
+
+        await tx.wait();
+
+        $('#depositStatus').removeClass().addClass('transaction-status success').html(`
+          <div>存款成功! 已存入 ${amount} ETH</div>
+          <div style="font-size: 0.8rem; margin-top: 5px;">交易哈希: ${tx.hash}</div>
+        `).fadeIn(300);
+
+        $('#depositAmount').val('');
+        getBalance();
+
+        // 添加成功动画
+        $('#balanceInfo').addClass('pulse');
+        setTimeout(() => {
+          $('#balanceInfo').removeClass('pulse');
+        }, 3000);
+      } catch (error) {
+        console.error('存款失败:', error);
+        $('#depositStatus').removeClass().addClass('transaction-status error').text('存款失败: ' + (error.message || '')).fadeIn(300);
+      } finally {
+        $('#depositButton').prop('disabled', false);
+        $('#depositSpinner').hide();
+      }
+    }
+
+    // 取款
+    async function withdraw () {
+      try {
+        const amount = $('#withdrawAmount').val();
+        if (!amount || parseFloat(amount) <= 0) {
+          showAlert('请输入有效的取款金额!', 'error');
+          return;
+        }
+
+        // 显示加载状态
+        $('#withdrawButton').prop('disabled', true);
+        $('#withdrawSpinner').show();
+        $('#withdrawStatus').removeClass().addClass('transaction-status pending').text('交易处理中...').fadeIn(300);
+
+        const tx = await contract.withdraw(ethers.parseEther(amount.toString()));
+
+        $('#withdrawStatus').removeClass().addClass('transaction-status pending').html(`
+          <div>交易已提交! 等待确认...</div>
+          <div style="font-size: 0.8rem; margin-top: 5px;">交易哈希: ${tx.hash}</div>
+        `).fadeIn(300);
+
+        await tx.wait();
+
+        $('#withdrawStatus').removeClass().addClass('transaction-status success').html(`
+          <div>取款成功! 已取出 ${amount} ETH</div>
+          <div style="font-size: 0.8rem; margin-top: 5px;">交易哈希: ${tx.hash}</div>
+        `).fadeIn(300);
+
+        $('#withdrawAmount').val('');
+        getBalance();
+
+        // 添加成功动画
+        $('#balanceInfo').addClass('pulse');
+        setTimeout(() => {
+          $('#balanceInfo').removeClass('pulse');
+        }, 3000);
+      } catch (error) {
+        console.error('取款失败:', error);
+        $('#withdrawStatus').removeClass().addClass('transaction-status error').text('取款失败: ' + (error.message || '')).fadeIn(300);
+      } finally {
+        $('#withdrawButton').prop('disabled', false);
+        $('#withdrawSpinner').hide();
+      }
+    }
+
+    // 显示提示
+    function showAlert (message, type) {
+      const alertElement = $('<div></div>')
+        .addClass('transaction-status')
+        .addClass(type)
+        .text(message)
+        .css({
+          'position': 'fixed',
+          'top': '20px',
+          'right': '20px',
+          'z-index': '1000',
+          'min-width': '300px',
+          'padding': '15px 20px',
+          'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
+          'display': 'block'
+        })
+        .appendTo('body');
+
+      setTimeout(() => {
+        alertElement.fadeOut(500, function () {
+          $(this).remove();
+        });
+      }, 5000);
+    }
+
+    // 页面加载完成后初始化
+    $(document).ready(function () {
+      init();
+
+      // 绑定按钮事件
+      $('#connectWallet').click(connectWallet);
+      $('#getBalance').click(getBalance);
+      $('#depositButton').click(deposit);
+      $('#withdrawButton').click(withdraw);
+
+      // 监听网络变化
+      if (window.ethereum) {
+        window.ethereum.on('chainChanged', () => {
+          window.location.reload();
+        });
+
+        window.ethereum.on('accountsChanged', (accounts) => {
+          if (accounts.length === 0) {
+            // 用户断开连接
+            $('#walletInfo').fadeOut(300);
+            $('#balanceInfo').fadeOut(300);
+            $('#connectWallet').html('<i class="fas fa-link"></i> 连接钱包');
+            $('#connectWallet').css('background-color', '');
+            $('#connectWallet').prop('disabled', false);
+          } else {
+            // 用户切换账户
+            userAddress = accounts[0];
+            updateWalletUI(userAddress);
+            getBalance();
+          }
+        });
+      }
+    });
+  </script>
+</body>
+
+</html>
